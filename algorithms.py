@@ -96,10 +96,13 @@ class GRP_Solver:
 	def solve(self):
 		c, A, b, bnds = self.__graph_to_equations() 
 		res = linprog(c, A_eq=A, b_eq=b, bounds=bnds)
-		print(res)
+		#print(res)
 		flows = np.round(res.x, 2)
 		ambivalence = res.x - flows 
-		print(np.average(ambivalence))
+		if np.max(np.abs(ambivalence)) > 0.4:
+			raise ValueError("Lösung ist zu ungenau")
+		if not res.success:
+			raise ValueError("Gleichungssystem konnte nicht gelöst werden")	
 		return flows
 
 

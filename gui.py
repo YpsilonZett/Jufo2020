@@ -1,4 +1,4 @@
-from algorithms import *
+import algorithms
 
 import wx
 import wx.lib.mixins.inspection as WIT
@@ -121,7 +121,7 @@ class ParticleRearrengementPanel(wx.Panel):
 
     def calculate(self, event):
         try:
-            rp = RearrengementProblem(self.particle_positions, self.target_positions)
+            rp = algorithms.RearrengementProblem(self.particle_positions, self.target_positions)
             self.matching = rp.solve()
             self.update_line_plot()
         except ValueError as e:
@@ -196,10 +196,10 @@ class GraphRedistributePanel(wx.Panel):
         undo_btn2 = wx.Button(panel, wx.ID_ANY, label="Rückgängig")
         undo_btn2.Bind(wx.EVT_BUTTON, self.undo_edge)
         # control buttons
-        calculate_btn = wx.Button(panel, wx.ID_ANY, label="Berechnen")
+        calculate_btn = wx.Button(panel, wx.ID_ANY, label="f(e) berechnen")
         calculate_btn.Bind(wx.EVT_BUTTON, self.calculate)
-        simulate_btn = wx.Button(panel, wx.ID_ANY, label="Simulieren")
-        simulate_btn.Bind(wx.EVT_BUTTON, self.simulate)
+        height_btn = wx.Button(panel, wx.ID_ANY, label="h(t) anzeigen")
+        height_btn.Bind(wx.EVT_BUTTON, self.show_ht_funcs)
         # add to sizer
         vbox = wx.BoxSizer(wx.VERTICAL)  
         vbox.Add(l1, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5) 
@@ -213,14 +213,14 @@ class GraphRedistributePanel(wx.Panel):
         vbox.Add(undo_btn2, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
         vbox.AddSpacer(4)
         vbox.Add(calculate_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
-        vbox.Add(simulate_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+        vbox.Add(height_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
         panel.SetSizer(vbox) 
         self.sizer.Add(panel)
 
     def create_vertex(self, event):  
         try:
             data = tuple(map(float, self.vertex_input.GetValue().split(',')))
-            vertex = GRP_Vertex(len(self.vertices), *data)  # name is its own position
+            vertex = algorithms.GRP_Vertex(len(self.vertices), *data)  # name is its own position
             self.vertices.append(vertex)
         except:
             wx.MessageBox("Fehler: Eingabe muss das Format \"s,t\" haben", "Error", wx.OK | wx.ICON_ERROR)
@@ -235,7 +235,7 @@ class GraphRedistributePanel(wx.Panel):
     def create_edge(self, event): 
         try:
             data = tuple(map(int, self.edge_input.GetValue().split(',')))
-            edge = GRP_Edge(self.vertices[data[0]], self.vertices[data[1]])
+            edge = algorithms.GRP_Edge(self.vertices[data[0]], self.vertices[data[1]])
             if edge not in self.edges:
                 self.edges.append(edge)        
         except:
@@ -250,17 +250,23 @@ class GraphRedistributePanel(wx.Panel):
         self.update_graph_plot()
 
     def calculate(self, event):
-        network = GRP_Network() 
-        network.vertices = self.vertices
-        network.edges = self.edges
-        flows = GRP_Solver(network).solve()
-        l = {e: str(flows[i]) for i, e in enumerate(self.nx_graph.edges())}
+        self.network = algorithms.GRP_Network() 
+        self.network.vertices = self.vertices
+        self.network.edges = self.edges
+        self.flows = [0.0 for _ in range(len(self.edges))]
+        try:
+            self.flows = algorithms.GRP_Solver(self.network).solve()
+        except ValueError as e:
+            wx.MessageBox("Fehler: " + str(e), "Error", wx.OK | wx.ICON_ERROR) 
+        l = {}
+        for i in range(len(self.edges)):
+            l[(str(self.edges[i].vertexU), str(self.edges[i].vertexV))] = str(self.flows[i])
         nx.draw_networkx_edge_labels(self.nx_graph, pos=self.graph_layout, ax=self.subplot, 
-            edge_labels=l, font_size=8, label_pos=0.75)    
+            edge_labels=l, font_size=8, label_pos=0.25)    
         self.canvas.draw()
 
-    def simulate(self, event):
-        return 
+    def show_ht_funcs(self, event):
+        frame = HtFunctionPlotFrame(self.flows, self.network) 
 
     def update_graph_plot(self):
         self.subplot.clear()
@@ -276,7 +282,38 @@ class GraphRedistributePanel(wx.Panel):
         nx.draw_networkx_labels(self.nx_graph, pos=self.graph_layout, ax=self.subplot, 
             labels={v: v for v in V}, font_size=10, font_weight="bold")
         self.canvas.draw()
-        
+     
+
+class HtFunctionPlotFrame(wx.Frame):
+    def __init__(self, flows, network, parent=None):
+        wx.Frame.__init__(self, parent=parent, title="h_e(t) Plots")
+        self.Show()
+        self.flows = flows
+        self.network = network
+        self.setup_plot()
+        self.draw_plot()
+
+    def setup_plot(self):
+        self.sizer = wx.BoxSizer(wx.VERTICAL)
+        self.SetSizer(self.sizer)
+        self.figure = plt.Figure(figsize=(4, 4))
+        self.subplot = self.figure.add_subplot(111)
+        self.canvas = FigureCanvas(self, -1, self.figure)  
+        self.sizer.Add(self.canvas, 1, wx.EXPAND, 5)
+    
+    def draw_plot(self):
+        self.subplot.clear()
+        starting_values = algorithms.np.array([v.start_value for v in self.network.vertices])
+        flow_delta_vertices = algorithms.np.zeros(len(self.network.vertices))
+        for i in range(len(self.network.edges)):
+            flow_delta_vertices[self.network.edges[i].vertexU.name] -= self.flows[i]
+            flow_delta_vertices[self.network.edges[i].vertexV.name] += self.flows[i]
+        time = algorithms.np.linspace(0, 1, 100)
+        for i in range(len(self.network.vertices)):
+            ht_v = time * flow_delta_vertices[i] + starting_values[i]
+            self.subplot.plot(time, ht_v)
+        self.canvas.draw()
+
 
 class MainFrame(wx.Frame):
     def __init__(self):
