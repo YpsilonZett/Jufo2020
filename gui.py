@@ -163,6 +163,7 @@ class GraphRedistributePanel(wx.Panel):
 
         self.vertices = []
         self.edges = []
+        self.capacity = 0
 
     def add_canvas_with_toolbar(self):
         self.plot_panel = wx.Panel(self)
@@ -196,10 +197,17 @@ class GraphRedistributePanel(wx.Panel):
         undo_btn2 = wx.Button(panel, wx.ID_ANY, label="Rückgängig")
         undo_btn2.Bind(wx.EVT_BUTTON, self.undo_edge)
         # control buttons
-        calculate_btn = wx.Button(panel, wx.ID_ANY, label="f(e) berechnen")
+        calculate_btn = wx.Button(panel, wx.ID_ANY, label="MUP Lösen")
         calculate_btn.Bind(wx.EVT_BUTTON, self.calculate)
         height_btn = wx.Button(panel, wx.ID_ANY, label="h(t) anzeigen")
         height_btn.Bind(wx.EVT_BUTTON, self.show_ht_funcs)
+        # zmup extension 
+        l3 = wx.StaticText(panel, -1, "Kantenkapazität \"c\"") # TODO capacity for every edge
+        self.c_input = wx.TextCtrl(panel) 
+        create_btn3 = wx.Button(panel, wx.ID_ANY, label="Setzen")
+        create_btn3.Bind(wx.EVT_BUTTON, self.set_capacity)
+        height_btn2 = wx.Button(panel, wx.ID_ANY, label="ZMUP lösen")
+        height_btn2.Bind(wx.EVT_BUTTON, self.show_ht_func_zmup)
         # add to sizer
         vbox = wx.BoxSizer(wx.VERTICAL)  
         vbox.Add(l1, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5) 
@@ -214,6 +222,11 @@ class GraphRedistributePanel(wx.Panel):
         vbox.AddSpacer(4)
         vbox.Add(calculate_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
         vbox.Add(height_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+        vbox.AddSpacer(4)
+        vbox.Add(l3, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5)
+        vbox.Add(self.c_input, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5)
+        vbox.Add(create_btn3, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+        vbox.Add(height_btn2, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
         panel.SetSizer(vbox) 
         self.sizer.Add(panel)
 
@@ -249,13 +262,20 @@ class GraphRedistributePanel(wx.Panel):
             self.edges.pop()
         self.update_graph_plot()
 
+    def set_capacity(self, event):
+        try: 
+            self.capacity = float(self.c_input.GetValue())
+        except:
+            wx.MessageBox("Fehler: Eingabe muss das Format \"c\" (float) haben", "Error", wx.OK | wx.ICON_ERROR)
+            return  
+
     def calculate(self, event):
         self.network = algorithms.GRP_Network() 
         self.network.vertices = self.vertices
         self.network.edges = self.edges
         self.flows = [0.0 for _ in range(len(self.edges))]
         try:
-            self.flows = algorithms.GRP_Solver(self.network).solve()
+            self.flows = algorithms.GRP_Solver(self.network).solve_MUP()
         except ValueError as e:
             wx.MessageBox("Fehler: " + str(e), "Error", wx.OK | wx.ICON_ERROR) 
         l = {}
@@ -265,8 +285,12 @@ class GraphRedistributePanel(wx.Panel):
             edge_labels=l, font_size=8, label_pos=0.25)    
         self.canvas.draw()
 
-    def show_ht_funcs(self, event):
+    def show_ht_funcs(self, event): # call this after "calculate"
         frame = HtFunctionPlotFrame(self.flows, self.network) 
+
+    def show_ht_func_zmup(self, event): 
+        zmup_flows, end = algorithms.GRP_Solver(self.network).solve_ZMUP([self.capacity for _ in range(len(self.edges))])
+        frame = HtFunctionPlotFrame(zmup_flows, self.network, t_end=end)
 
     def update_graph_plot(self):
         self.subplot.clear()
@@ -285,11 +309,12 @@ class GraphRedistributePanel(wx.Panel):
      
 
 class HtFunctionPlotFrame(wx.Frame):
-    def __init__(self, flows, network, parent=None):
-        wx.Frame.__init__(self, parent=parent, title="h_e(t) Plots")
+    def __init__(self, flows, network, parent=None, t_end=1):
+        wx.Frame.__init__(self, parent=parent, title="h_v(t) Plots")
         self.Show()
         self.flows = flows
         self.network = network
+        self.t_end = t_end
         self.setup_plot()
         self.draw_plot()
 
@@ -308,10 +333,12 @@ class HtFunctionPlotFrame(wx.Frame):
         for i in range(len(self.network.edges)):
             flow_delta_vertices[self.network.edges[i].vertexU.name] -= self.flows[i]
             flow_delta_vertices[self.network.edges[i].vertexV.name] += self.flows[i]
-        time = algorithms.np.linspace(0, 1, 100)
+        time = algorithms.np.linspace(0, self.t_end, 100)
         for i in range(len(self.network.vertices)):
             ht_v = time * flow_delta_vertices[i] + starting_values[i]
-            self.subplot.plot(time, ht_v)
+            self.subplot.plot(time, ht_v, label="h_{}(t)".format(i))
+        self.subplot.set_xlim((0,1))
+        self.subplot.legend()
         self.canvas.draw()
 
 
