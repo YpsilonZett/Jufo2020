@@ -1,5 +1,8 @@
 import algorithms
 
+import sys
+import traceback
+
 import wx
 import wx.lib.mixins.inspection as WIT
 
@@ -121,7 +124,7 @@ class ParticleRearrengementPanel(wx.Panel):
 
     def calculate(self, event):
         try:
-            rp = algorithms.RearrengementProblem(self.particle_positions, self.target_positions)
+            rp = algorithms.RUP_Solver(self.particle_positions, self.target_positions)
             self.matching = rp.solve()
             self.update_line_plot()
         except ValueError as e:
@@ -275,7 +278,7 @@ class GraphRedistributePanel(wx.Panel):
         self.network.edges = self.edges
         self.flows = [0.0 for _ in range(len(self.edges))]
         try:
-            self.flows = algorithms.GRP_Solver(self.network).solve_MUP()
+            self.flows = algorithms.GRP_Solver.solve_MUP(self.network)
         except ValueError as e:
             wx.MessageBox("Fehler: " + str(e), "Error", wx.OK | wx.ICON_ERROR) 
         l = {}
@@ -289,7 +292,8 @@ class GraphRedistributePanel(wx.Panel):
         frame = HtFunctionPlotFrame(self.flows, self.network) 
 
     def show_ht_func_zmup(self, event): 
-        zmup_flows, end = algorithms.GRP_Solver(self.network).solve_ZMUP([self.capacity for _ in range(len(self.edges))])
+        zmup_flows, end = algorithms.GRP_Solver.solve_ZMUP(self.network, 
+            [self.capacity for _ in range(len(self.edges))])
         frame = HtFunctionPlotFrame(zmup_flows, self.network, t_end=end)
 
     def update_graph_plot(self):
@@ -299,7 +303,7 @@ class GraphRedistributePanel(wx.Panel):
         self.nx_graph.add_nodes_from(V)
         E = [(str(e.vertexU), str(e.vertexV)) for e in self.edges]
         self.nx_graph.add_edges_from(E)
-        self.graph_layout = nx.kamada_kawai_layout(self.nx_graph, scale=1)
+        self.graph_layout = nx.spring_layout(self.nx_graph, scale=1)
         self.subplot.set_xlim([-1.25,1.25])
         self.subplot.set_ylim([-1.25,1.25])
         nx.draw(self.nx_graph, pos=self.graph_layout, ax=self.subplot, node_size=150)
@@ -342,6 +346,139 @@ class HtFunctionPlotFrame(wx.Frame):
         self.canvas.draw()
 
 
+class GridGraphPanel(wx.Panel):
+    def __init__(self, parent):
+        wx.Panel.__init__(self, parent)
+        self.sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.add_canvas_with_toolbar()
+        self.add_controls()
+
+        self.SetSizer(self.sizer)
+        self.Fit()
+
+        self.capacity = 0
+        self.start_values = []
+        self.current_values = []
+        self.target_values = []
+        self.process = []
+
+    def add_canvas_with_toolbar(self):
+        self.plot_panel = wx.Panel(self)
+        self.plot_panel_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.figure = plt.Figure(figsize=(8, 8))
+        self.subplot = self.figure.add_subplot(111)
+        plt.title("Title")
+        self.canvas = FigureCanvas(self.plot_panel, -1, self.figure)  
+        self.plot_panel_sizer.Add(self.canvas, 1, wx.EXPAND, 5)
+        self.plot_panel.SetSizer(self.plot_panel_sizer)
+        #toolbar = NavigationToolbar2Wx(self.canvas)
+        #toolbar.Realize()
+        #self.plot_panel_sizer.Add(toolbar, 1, wx.SHAPED, 5)
+        #toolbar.update() 
+        self.sizer.Add(self.plot_panel, 1, wx.EXPAND, 5)
+
+    def add_controls(self): 
+        panel = wx.Panel(self) 
+
+        l1 = wx.StaticText(panel, -1, "Gitter-Abmessungen \"N,M\"") 
+        self.dimension_input = wx.TextCtrl(panel) 
+        dimension_btn = wx.Button(panel, wx.ID_ANY, label="Setzen")
+        dimension_btn.Bind(wx.EVT_BUTTON, self.init_grid)
+
+        l2 = wx.StaticText(panel, -1, "Zellwert \"x,y,start,ziel\"") 
+        self.value_input = wx.TextCtrl(panel) 
+        value_btn = wx.Button(panel, wx.ID_ANY, label="Setzen")
+        value_btn.Bind(wx.EVT_BUTTON, self.set_value)
+
+        l3 = wx.StaticText(panel, -1, "k_max:") 
+        self.capacity_input = wx.TextCtrl(panel) 
+        capacity_btn = wx.Button(panel, wx.ID_ANY, label="Setzen")
+        capacity_btn.Bind(wx.EVT_BUTTON, self.set_capacity)
+
+        step_simulation_btn = wx.Button(panel, wx.ID_ANY, label="SZMUP simulieren")
+        step_simulation_btn.Bind(wx.EVT_BUTTON, self.step_simulation)
+        next_step_btn = wx.Button(panel, wx.ID_ANY, label="Nächster Schritt")
+        next_step_btn.Bind(wx.EVT_BUTTON, self.next_step)
+        continuous_btn = wx.Button(panel, wx.ID_ANY, label="MUP stetig Simulieren")
+        continuous_btn.Bind(wx.EVT_BUTTON, self.continuous_simulation)
+
+        # add to sizer
+        vbox = wx.BoxSizer(wx.VERTICAL)  
+        vbox.Add(l1, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5) 
+        vbox.Add(self.dimension_input, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5) 
+        vbox.Add(dimension_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+        vbox.Add(l2, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5) 
+        vbox.Add(self.value_input, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5) 
+        vbox.Add(value_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+        vbox.AddSpacer(4)
+        vbox.Add(l3, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5)
+        vbox.Add(self.capacity_input, 1, wx.EXPAND | wx.ALIGN_LEFT | wx.ALL, 5) 
+        vbox.Add(capacity_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+        vbox.Add(step_simulation_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+        vbox.Add(next_step_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+        vbox.AddSpacer(4)
+        vbox.Add(continuous_btn, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+        panel.SetSizer(vbox) 
+        self.sizer.Add(panel)
+
+    def init_grid(self, event):
+        try:
+            N, M = self.dimension_input.GetValue().split(",")
+            self.start_values = algorithms.np.zeros((int(N), int(M)))
+            self.target_values = algorithms.np.zeros((int(N), int(M)))
+        except:
+            wx.MessageBox("Fehler: Eingabe muss das Format \"N,M\" haben", "Error", wx.OK | wx.ICON_ERROR)
+            return 
+        self.current_values = self.start_values
+        self.update_grid_plot()
+
+    def set_value(self, event):
+        try:
+            x, y, start, target = self.value_input.GetValue().split(",")
+            self.start_values[int(y),int(x)] = float(start)
+            self.target_values[int(y),int(x)] = float(target)
+        except:
+            wx.MessageBox("Fehler: Eingabe muss das Format \"x,y,start,ziel\" haben (Index startet bei 0)", 
+                "Error", wx.OK | wx.ICON_ERROR)
+            return 
+        self.current_values = self.start_values
+        self.update_grid_plot()
+
+    def set_capacity(self, event):
+        try:
+            self.capacity = int(self.capacity_input.GetValue())
+        except:
+            wx.MessageBox("Fehler: Kapazität muss eine natürliche Zahl größer 0 sein", "Error", 
+                wx.OK | wx.ICON_ERROR)
+            return 
+        self.current_values = self.start_values
+        self.update_grid_plot()
+
+    def step_simulation(self, event):
+        self.process = algorithms.GRP_Solver.solve_SZUP(self.start_values, 
+            self.target_values, self.capacity)
+        self.current_values = self.process.pop(0)
+
+    def next_step(self, event):
+        if len(self.process) == 0:
+            return 
+        self.current_values = self.process.pop(0)
+        self.update_grid_plot()
+
+    def continuous_simulation(self, event):
+        return 
+
+    def update_grid_plot(self):
+        self.subplot.clear()
+        im = self.subplot.imshow(self.current_values)
+        for y in range(self.current_values.shape[0]):
+            for x in range(self.current_values.shape[1]):
+                text = self.subplot.text(x, y, "{} / {}".format(self.current_values[y,x], self.target_values[y,x]), 
+                    ha="center", va="center", color="w")
+        self.canvas.draw()
+
+
 class MainFrame(wx.Frame):
     def __init__(self):
         wx.Frame.__init__(self, None, -1, 'JuFo 2020', size=(800, 800))
@@ -358,10 +495,15 @@ class MainFrame(wx.Frame):
 
     def create_menu(self):
         menu_sizer = wx.BoxSizer(wx.VERTICAL)
-        btn_prp = wx.Button(self, wx.ID_ANY, label="Partikel-Umordnungsproblem")
+        btn_prp = wx.Button(self, wx.ID_ANY, label="Roboter Umpositionierung")
         btn_prp.Bind(wx.EVT_BUTTON, self.on_btn_prp)
         menu_sizer.Add(btn_prp, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
-        btn_grp = wx.Button(self, wx.ID_ANY, label="Graphen-Umverteilungsproblem")
+
+        btn_ggp = wx.Button(self, wx.ID_ANY, label="Partikel im Zellgitter")
+        btn_ggp.Bind(wx.EVT_BUTTON, self.on_btn_ggp)
+        menu_sizer.Add(btn_ggp, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
+
+        btn_grp = wx.Button(self, wx.ID_ANY, label="Graphen-MUP und -ZMUP")
         btn_grp.Bind(wx.EVT_BUTTON, self.on_btn_grp)
         menu_sizer.Add(btn_grp, 1, wx.EXPAND | wx.ALIGN_LEFT, 5)
         self.main_sizer.Add(menu_sizer)
@@ -382,10 +524,26 @@ class MainFrame(wx.Frame):
         self.main_sizer.Add(self.current_panel)
         self.Layout()
 
+    def on_btn_ggp(self, event):
+        ggp = GridGraphPanel(self)
+        self.current_panel.Hide()
+        self.main_sizer.Remove(self.main_sizer.GetItemCount() - 1)
+        self.current_panel = ggp
+        self.main_sizer.Add(self.current_panel)
+        self.Layout() 
+
+
+def exception_handler(etype, value, trace):
+    frame = wx.GetApp().GetTopWindow()
+    tmp = traceback.format_exception(etype, value, trace)
+    exception = "".join(tmp)
+    wx.MessageBox(exception, "Fehler!", wx.OK | wx.ICON_ERROR)
+
     
 class App(WIT.InspectableApp):
     def OnInit(self):
         self.Init()
         frame = MainFrame()
+        sys.excepthook = exception_handler
         frame.Show(True)
         return True
